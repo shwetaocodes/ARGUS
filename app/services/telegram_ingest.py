@@ -48,6 +48,7 @@ def poll_all_telegram_sources(db: Session):
         Source.type == SourceType.telegram, Source.is_active == True
     ).all()
 
+
     total = 0
     for source in sources:
         try:
@@ -58,3 +59,4 @@ def poll_all_telegram_sources(db: Session):
             print(f"[Telegram] {source.name} failed: {e}")
 
     return total
+

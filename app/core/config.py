@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     OLLAMA_MODEL: str = "llama3.1"
     OLLAMA_HOST: str = "http://localhost:11434"
 
+    GEONAMES_USERNAME: str
+
     class Config:
         env_file = ".env"
 

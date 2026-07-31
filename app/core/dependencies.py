@@ -9,6 +9,8 @@ from app.models.analyst import Analyst
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
+SENIOR_ROLES = {"senior_analyst", "admin"}
+
 def get_current_user(
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db),
@@ -30,3 +32,8 @@ def get_current_user(
     if analyst is None:
         raise credentials_exception
     return analyst
+
+def require_senior_analyst(current_user: Analyst = Depends(get_current_user)) -> Analyst:
+    if current_user.role not in SENIOR_ROLES:
+        raise HTTPException(status_code=403, detail="Senior analyst role required for this action")
+    return current_user
