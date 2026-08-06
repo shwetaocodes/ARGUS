@@ -33,7 +33,7 @@ end
 # Unset irrelevant variables.
 deactivate nondestructive
 
-set -gx VIRTUAL_ENV 'C:\Users\rajat\Documents\coding\Frelance Project\ARGUS — Predictive Threat Pattern Recognition Platform\ARGUS\.venv'
+set -gx VIRTUAL_ENV 'C:\Users\Shweta Sharma\Documents\coding\Frelance Project\ARGUS — Predictive Threat Pattern Recognition Platform\ARGUS\.venv'
 
 set -gx _OLD_VIRTUAL_PATH $PATH
 set -gx PATH "$VIRTUAL_ENV/"Scripts $PATH

@@ -2,7 +2,6 @@ import networkx as nx
 from sqlalchemy.orm import Session
 from app.models.entity_relationship import EntityRelationship
 from app.models.event_entity import EventEntity
-from app.services.graph_analysis import get_entity_neighborhood
 from app.models.entity import Entity
 
 
