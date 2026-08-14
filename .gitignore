@@ -1,0 +1,13 @@
+venv/
+.venv/
+__pycache__/
+*.pyc
+.env
+.vscode/
+.idea/
+
+.DS_Store
+Thumbs.db
+node_modules/
+.git_backup/
+intel_platform_session.session
