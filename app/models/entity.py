@@ -2,6 +2,7 @@ import enum
 from sqlalchemy import Column, Integer, String, Enum, ARRAY, Float
 from sqlalchemy.orm import relationship
 from app.core.database import Base
+from sqlalchemy import ARRAY, Float
 
 class EntityType(str, enum.Enum):
     person = "person"
@@ -35,3 +36,5 @@ class Entity(Base):
     event_links = relationship("EventEntity", back_populates="entity")
 
     alerts = relationship("Alert", back_populates="entity")
+
+    name_embedding = Column(ARRAY(Float), nullable=True)

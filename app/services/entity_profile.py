@@ -1,4 +1,5 @@
 from sqlalchemy.orm import Session
+from datetime import datetime, timezone
 from sqlalchemy import func
 from app.models.entity import Entity
 from app.models.event_entity import EventEntity
@@ -35,24 +36,69 @@ def get_entity_profile(db: Session, entity_id: int) -> dict:
 
 
 def get_entity_timeline(db: Session, entity_id: int) -> list[dict]:
-    """All events linked to this entity, across every source, chronologically."""
-    rows = db.query(Event, EventEntity).join(
-        EventEntity, EventEntity.event_id == Event.id
-    ).filter(
-        EventEntity.entity_id == entity_id
-    ).order_by(Event.published_at.asc()).all()
+    """
+    Full cross-source timeline for one entity — ingested events, manually
+    logged incidents, and free-text sitreps, merged into one chronological
+    list. This is the literal fulfillment of the entity-memory requirement:
+    an entity mentioned in an RSS article and again in a field incident
+    report shows up together here, ordered by date, regardless of source.
+    """
+    from app.models.incident_entity import IncidentEntity
+    from app.models.incident import Incident
+    from app.models.sitrep_entity import SitrepEntity
+    from app.models.sitrep import Sitrep
 
-    return [
-        {
-            "event_id": e.id,
+    timeline = []
+
+    # --- Ingested events ---
+    event_rows = db.query(Event, EventEntity).join(
+        EventEntity, EventEntity.event_id == Event.id
+    ).filter(EventEntity.entity_id == entity_id).all()
+
+    for e, ee in event_rows:
+        timeline.append({
+            "source_type": "event",
+            "id": e.id,
             "title": e.title,
-            "published_at": e.published_at,
-            "source_id": e.source_id,
+            "date": e.published_at,
             "relevance_score": ee.relevance_score,
+            "confidence": ee.confidence,
             "status": e.status.value,
-        }
-        for e, ee in rows
-    ]
+        })
+
+    # --- Manually logged incidents ---
+    incident_rows = db.query(Incident, IncidentEntity).join(
+        IncidentEntity, IncidentEntity.incident_id == Incident.id
+    ).filter(IncidentEntity.entity_id == entity_id).all()
+
+    for i, ie in incident_rows:
+        timeline.append({
+            "source_type": "incident",
+            "id": i.id,
+            "title": f"{i.type.value}: {i.location}",
+            "date": i.incident_date,
+            "relevance_score": None,
+            "confidence": ie.confidence,
+            "reliability_rating": i.reliability_rating,
+        })
+
+    # --- Free-text sitreps ---
+    sitrep_rows = db.query(Sitrep, SitrepEntity).join(
+        SitrepEntity, SitrepEntity.sitrep_id == Sitrep.id
+    ).filter(SitrepEntity.entity_id == entity_id).all()
+
+    for s, se in sitrep_rows:
+        timeline.append({
+            "source_type": "sitrep",
+            "id": s.id,
+            "title": s.content[:100],
+            "date": s.created_at,
+            "relevance_score": None,
+            "confidence": se.confidence,
+        })
+
+    timeline.sort(key=lambda x: x["date"] or datetime.min.replace(tzinfo=timezone.utc))
+    return timeline
 
 
 def get_entity_relationships(db: Session, entity_id: int) -> list[dict]:

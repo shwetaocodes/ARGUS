@@ -8,6 +8,7 @@ from app.models.incident import Incident
 from app.models.event import Event
 from app.models.analyst import Analyst
 from app.schemas.incident import IncidentCreate, IncidentOut
+from app.services.manual_entry_nlp import process_incident_entities
 
 router = APIRouter(prefix="/incidents", tags=["incidents"])
 
@@ -34,6 +35,7 @@ def create_incident(
     db.add(incident)
     db.commit()
     db.refresh(incident)
+    process_incident_entities(db, incident)
     return incident
 
 

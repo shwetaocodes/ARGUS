@@ -37,9 +37,11 @@ def fetch_rss_feed(db: Session, source: Source) -> int:
             dedupe_hash=dedupe_hash,
         )
         db.add(event)
+        db.flush()
         inserted += 1
 
     db.commit()
+    producer.flush()
     return inserted
 
 

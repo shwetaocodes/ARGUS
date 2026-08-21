@@ -13,6 +13,8 @@ from app.services.geocoding import geocode_place
 from app.services.geocoder import geocode_place
 from app.models.entity_relationship import EntityRelationship
 from app.services.watch_service import check_entity_watches, check_location_watches
+from app.services.entity_resolver import resolve_entity
+from app.services.pipeline.orchestrator import process_event_pipeline
 
 ollama_client = ollama.Client(host=settings.OLLAMA_HOST)
 
@@ -47,26 +49,15 @@ def extract_structured_data(text: str) -> dict:
     return json.loads(response["message"]["content"])
 
 
-def upsert_entity(db: Session, name: str, entity_type: str, context: str = "") -> Entity:
-    existing = db.query(Entity).filter(
-        or_(Entity.name.ilike(name), Entity.aliases.any(name))
-    ).first()
-    if existing:
-        return existing
+def upsert_entity(db: Session, name: str, entity_type: str) -> Entity:
+    entity = resolve_entity(db, name, entity_type)
 
-    entity = Entity(name=name, type=EntityType(entity_type), aliases=[])
-
-    if entity_type == "location":
-        geo = geocode_place(name, context=context)
+    if entity_type == "location" and entity.latitude is None:
+        geo = geocode_place(name)
         if geo:
             entity.latitude = geo["lat"]
             entity.longitude = geo["lon"]
             entity.geocode_confidence = geo["confidence"]
-        else:
-            entity.geocode_confidence = "failed"
-
-    db.add(entity)
-    db.flush()
     return entity
 
 def process_event(db: Session, event: Event):
@@ -161,9 +152,8 @@ def process_event(db: Session, event: Event):
                 ))        
 
 
-def process_raw_events(db: Session, limit: int = 20):
+def process_raw_events(db, limit=20):
     events = db.query(Event).filter(Event.status == EventStatus.raw).limit(limit).all()
     for event in events:
-        process_event(db, event)
+        process_event_pipeline(db, event)
     return len(events)
-

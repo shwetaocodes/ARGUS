@@ -7,47 +7,68 @@ import json
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
-from app.models.analyst import Analyst
-from app.models.event import Event
 from app.models.event_entity import EventEntity
+from app.models.incident_entity import IncidentEntity
+from app.models.sitrep_entity import SitrepEntity
 from app.models.event_classification import EventClassification, EventCategory
 from app.models.extraction_correction import ExtractionCorrection
+from app.models.source import Source
 
 router = APIRouter(prefix="/review", tags=["review"])
 
+LINK_TABLES = {
+    "event": (EventEntity, "event_id"),
+    "incident": (IncidentEntity, "incident_id"),
+    "sitrep": (SitrepEntity, "sitrep_id"),
+}
+
 
 @router.get("/queue")
-def get_review_queue(db: Session = Depends(get_db), current_user: Analyst = Depends(get_current_user)):
-    """Events with any pending extraction awaiting review."""
-    pending_entities = db.query(EventEntity).filter(EventEntity.review_status == "pending").all()
-    pending_classifications = db.query(EventClassification).filter(
-        EventClassification.review_status == "pending"
-    ).all()
+def get_review_queue(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Pending items across ALL entity sources — event, incident, and sitrep —
+    plus event classifications. This is the fix: previously only event-sourced
+    entities appeared here at all."""
+    result = {"pending_entity_links": [], "pending_classifications": []}
 
-    return {
-        "pending_entity_links": [
-            {"id": e.id, "event_id": e.event_id, "entity_name": e.entity.name,
-             "entity_type": e.entity.type.value, "confidence": e.confidence}
-            for e in pending_entities
-        ],
-        "pending_classifications": [
-            {"id": c.id, "event_id": c.event_id, "category": c.category.value, "confidence": c.confidence.value}
-            for c in pending_classifications
-        ],
-    }
+    for kind, (model, _) in LINK_TABLES.items():
+        rows = db.query(model).filter(model.review_status == "pending").all()
+        for link in rows:
+            result["pending_entity_links"].append({
+                "id": link.id, "kind": kind,
+                "entity_name": link.entity.name, "entity_type": link.entity.type.value,
+                "confidence": link.confidence,
+            })
+
+    classifications = db.query(EventClassification).filter(EventClassification.review_status == "pending").all()
+    for c in classifications:
+        result["pending_classifications"].append({
+            "id": c.id, "event_id": c.event_id, "category": c.category.value, "confidence": c.confidence.value,
+        })
+
+    return result
 
 
-class EntityReviewAction(BaseModel):
+class EntityLinkReviewAction(BaseModel):
+    kind: str  
     action: str  
     corrected_entity_type: Optional[str] = None
 
 
 @router.post("/entity-link/{link_id}")
 def review_entity_link(
-    link_id: int, payload: EntityReviewAction,
-    db: Session = Depends(get_db), current_user: Analyst = Depends(get_current_user),
+    link_id: int, payload: EntityLinkReviewAction,
+    db: Session = Depends(get_db), current_user=Depends(get_current_user),
 ):
-    link = db.query(EventEntity).filter(EventEntity.id == link_id).first()
+    """
+    Now takes a `kind` in the body to disambiguate which table link_id refers
+    to — link IDs are only unique WITHIN each table, not across all three,
+    so this can't be inferred from the ID alone.
+    """
+    if payload.kind not in LINK_TABLES:
+        raise HTTPException(status_code=400, detail=f"kind must be one of {list(LINK_TABLES.keys())}")
+
+    model, source_fk = LINK_TABLES[payload.kind]
+    link = db.query(model).filter(model.id == link_id).first()
     if not link:
         raise HTTPException(status_code=404, detail="Entity link not found")
 
@@ -68,26 +89,40 @@ def review_entity_link(
     link.reviewed_at = datetime.now(timezone.utc)
 
     db.add(ExtractionCorrection(
-        event_id=link.event_id, analyst_id=current_user.id, extraction_type="entity",
+        event_id=getattr(link, "event_id", None),  
+        source_table=payload.kind,
+        source_record_id=getattr(link, source_fk),
+        analyst_id=current_user.id, extraction_type="entity",
         original_value=json.dumps(original),
         corrected_value=json.dumps({"entity_type": payload.corrected_entity_type}) if payload.action == "correct" else None,
         action=payload.action,
     ))
 
+    #--- Source reliability feedback loop ---
+    source = None
+    if payload.kind == "event":
+        source = db.query(Source).filter(Source.id == link.event.source_id).first()
+    
+    if source:
+        source.total_reviewed_extractions += 1
+        if payload.action == "accept":
+            source.correct_extractions += 1
+
     db.commit()
-    return {"status": "reviewed", "link_id": link.id, "action": payload.action}
+    return {"status": "reviewed", "kind": payload.kind, "link_id": link.id, "action": payload.action}
 
 
 class ClassificationReviewAction(BaseModel):
-    action: str  # accept / reject / correct
+    action: str
     corrected_category: Optional[str] = None
-
 
 @router.post("/classification/{classification_id}")
 def review_classification(
     classification_id: int, payload: ClassificationReviewAction,
-    db: Session = Depends(get_db), current_user: Analyst = Depends(get_current_user),
+    db: Session = Depends(get_db), current_user=Depends(get_current_user),
 ):
+    """Unchanged — classification only ever applies to ingested events;
+    incidents already carry an analyst-assigned type, sitreps have none."""
     cls = db.query(EventClassification).filter(EventClassification.id == classification_id).first()
     if not cls:
         raise HTTPException(status_code=404, detail="Classification not found")
@@ -111,11 +146,11 @@ def review_classification(
     cls.reviewed_at = datetime.now(timezone.utc)
 
     db.add(ExtractionCorrection(
-        event_id=cls.event_id, analyst_id=current_user.id, extraction_type="classification",
+        event_id=cls.event_id, source_table="event", source_record_id=cls.event_id,
+        analyst_id=current_user.id, extraction_type="classification",
         original_value=json.dumps({"category": original_category}),
         corrected_value=json.dumps({"category": payload.corrected_category}) if payload.action == "correct" else None,
         action=payload.action,
     ))
-
     db.commit()
     return {"status": "reviewed", "classification_id": cls.id, "action": payload.action}

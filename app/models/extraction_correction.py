@@ -18,3 +18,6 @@ class ExtractionCorrection(Base):
 
     event = relationship("Event")
     analyst = relationship("Analyst")
+
+    source_table = Column(String, nullable=False, default="event") 
+    source_record_id = Column(Integer, nullable=True)

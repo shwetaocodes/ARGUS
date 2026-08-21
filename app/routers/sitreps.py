@@ -8,6 +8,7 @@ from app.models.sitrep import Sitrep
 from app.models.event import Event
 from app.models.analyst import Analyst
 from app.schemas.sitrep import SitrepCreate, SitrepOut
+from app.services.manual_entry_nlp import process_sitrep_entities
 
 router = APIRouter(prefix="/sitreps", tags=["sitreps"])
 
@@ -30,6 +31,7 @@ def create_sitrep(
     db.add(sitrep)
     db.commit()
     db.refresh(sitrep)
+    process_sitrep_entities(db, sitrep)
     return sitrep
 
 

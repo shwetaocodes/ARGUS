@@ -1,7 +1,10 @@
 from apscheduler.schedulers.background import BackgroundScheduler
+
 from app.core.database import SessionLocal
-from app.services.rss_ingest import poll_all_news_sources
 from app.models.sector import Sector
+
+from app.services.rss_ingest import poll_all_news_sources
+from app.services.telegram_ingest import poll_all_telegram_sources
 from app.services.anomaly_detector import run_anomaly_detection
 from app.services.temporal_detector import run_temporal_detection
 from app.services.sequence_matcher import run_sequence_detection
@@ -10,20 +13,30 @@ from app.services.baseline_service import compute_sector_baseline
 from app.services.digest_service import run_daily_digest
 from app.services.threshold_alert_service import evaluate_threshold_alerts
 
-
-
 scheduler = BackgroundScheduler()
+
 
 def scheduled_rss_poll():
     db = SessionLocal()
     try:
-        poll_all_news_sources(db)
+        count = poll_all_news_sources(db)
+        print(f"[scheduler] RSS poll: {count} new events")
+    except Exception as e:
+        print(f"[scheduler] RSS poll FAILED: {e}")
     finally:
         db.close()
 
-def start_scheduler():
-    scheduler.add_job(scheduled_rss_poll, "interval", minutes=15, id="rss_poll")
-    scheduler.start()
+
+def scheduled_telegram_poll():
+    db = SessionLocal()
+    try:
+        count = poll_all_telegram_sources(db)
+        print(f"[scheduler] Telegram poll: {count} new events")
+    except Exception as e:
+        print(f"[scheduler] Telegram poll FAILED: {e}")
+    finally:
+        db.close()
+
 
 def scheduled_detection_run():
     db = SessionLocal()
@@ -35,26 +48,40 @@ def scheduled_detection_run():
             run_temporal_detection(db, sector)
             run_sequence_detection(db, sector)
         run_cross_source_correlation(db)
+        print(f"[scheduler] Detection run complete across {len(sectors)} sectors")
+    except Exception as e:
+        print(f"[scheduler] Detection run FAILED: {e}")
     finally:
         db.close()
+
 
 def scheduled_digest_job():
     db = SessionLocal()
     try:
         run_daily_digest(db)
+        print("[scheduler] Daily digest generated")
+    except Exception as e:
+        print(f"[scheduler] Daily digest FAILED: {e}")
     finally:
         db.close()
+
 
 def scheduled_threshold_check():
     db = SessionLocal()
     try:
         evaluate_threshold_alerts(db)
+        print("[scheduler] Threshold check complete")
+    except Exception as e:
+        print(f"[scheduler] Threshold check FAILED: {e}")
     finally:
         db.close()
 
+
 def start_scheduler():
     scheduler.add_job(scheduled_rss_poll, "interval", minutes=15, id="rss_poll")
-    scheduler.add_job(scheduled_detection_run, "interval", hours=6, id="detection_run")  
+    scheduler.add_job(scheduled_telegram_poll, "interval", minutes=10, id="telegram_poll")
+    scheduler.add_job(scheduled_detection_run, "interval", hours=6, id="detection_run")
     scheduler.add_job(scheduled_digest_job, "cron", hour=5, minute=30, id="daily_digest")
     scheduler.add_job(scheduled_threshold_check, "interval", minutes=15, id="threshold_alerts")
     scheduler.start()
+    print("[scheduler] Started with jobs:", [job.id for job in scheduler.get_jobs()])

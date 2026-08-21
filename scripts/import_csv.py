@@ -1,6 +1,6 @@
 import sys
 import pandas as pd
-from datetime import datetime, timezone
+from pathlib import Path
 
 sys.path.insert(0, ".")
 
@@ -79,6 +79,15 @@ def import_csv(filepath: str):
         raise
     finally:
         db.close()
+
+def load_historical_file(filepath: str) -> pd.DataFrame:
+    ext = Path(filepath).suffix.lower()
+    if ext == ".csv":
+        return pd.read_csv(filepath)
+    elif ext in (".xlsx", ".xls"):
+        return pd.read_excel(filepath)  
+    else:
+        raise ValueError(f"Unsupported file type: '{ext}'. Use .csv, .xlsx, or .xls.")
 
 
 if __name__ == "__main__":

@@ -11,6 +11,9 @@ from app.routers import entities, map as map_router
 from fastapi import Depends
 from fastapi.middleware.cors import CORSMiddleware
 from app.routers import patterns, detections
+from app.routers import entity_resolution, notifications
+from app.routers import historical_import
+from app.core.audit_middleware import AuditLogMiddleware
 
 app = FastAPI(title="ARGUS — Predictive Threat Pattern Recognition Platform")
 
@@ -23,6 +26,8 @@ app.include_router(entities.router)
 app.include_router(map_router.router)
 app.include_router(patterns.router)
 app.include_router(detections.router)
+app.include_router(historical_import.router)
+app.add_middleware(AuditLogMiddleware)
 
 app.add_middleware(
     CORSMiddleware,

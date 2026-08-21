@@ -24,3 +24,6 @@ class Source(Base):
     is_active = Column(Boolean, default=True)
 
     events = relationship("Event", back_populates="source")
+
+    correct_extractions = Column(Integer, default=0)
+    total_reviewed_extractions = Column(Integer, default=0)
