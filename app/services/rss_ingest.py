@@ -5,9 +5,12 @@ from sqlalchemy.orm import Session
 from app.models.source import Source, SourceType
 from app.models.event import Event, EventStatus
 from app.services.dedupe import make_dedupe_hash
+from app.core.kafka_config import get_producer, TOPIC_RAW_EVENTS
+
 
 def fetch_rss_feed(db: Session, source: Source) -> int:
     """Fetch one RSS source, insert new raw events. Returns count inserted."""
+    producer = get_producer()
     parsed = feedparser.parse(source.identifier)
     inserted = 0
 
@@ -38,6 +41,8 @@ def fetch_rss_feed(db: Session, source: Source) -> int:
         )
         db.add(event)
         db.flush()
+
+        producer.send(TOPIC_RAW_EVENTS, {"event_id": event.id})
         inserted += 1
 
     db.commit()

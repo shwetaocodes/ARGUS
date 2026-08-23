@@ -6,6 +6,7 @@ from app.core.config import settings
 from app.models.source import Source, SourceType
 from app.models.event import Event, EventStatus
 from app.services.dedupe import make_dedupe_hash
+from app.core.kafka_config import get_producer, TOPIC_RAW_EVENTS
 
 def get_telegram_client() -> TelegramClient:
     return TelegramClient(
@@ -15,7 +16,9 @@ def get_telegram_client() -> TelegramClient:
     )
 
 def fetch_telegram_channel(db: Session, source: Source, limit: int = 50) -> int:
+    producer = get_producer()
     inserted = 0
+    
     with get_telegram_client() as client:
         messages = client.get_messages(source.identifier, limit=limit)
         for msg in messages:
@@ -37,9 +40,12 @@ def fetch_telegram_channel(db: Session, source: Source, limit: int = 50) -> int:
                 dedupe_hash=dedupe_hash,
             )
             db.add(event)
+            db.flush()
+            producer.send(TOPIC_RAW_EVENTS, {"event_id": event.id})
             inserted += 1
 
     db.commit()
+    producer.flush()
     return inserted
 
 

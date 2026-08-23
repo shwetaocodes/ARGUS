@@ -1,12 +1,12 @@
 """
-NLP extraction worker — consumes raw-events, processes, persists, publishes
-processed-events. Run as its own long-lived process, separate from uvicorn:
+NLP extraction worker — consumes raw-events, processes via the staged
+pipeline (NER -> entity linking -> classification -> geocoding -> sentiment,
+each independently retried and validated), persists, publishes
+processed-events.
 
+Run as its own long-lived process:
     python -m app.workers.nlp_worker
-
-Run multiple instances (different terminals, or containers) to scale
-horizontally — Kafka's consumer group mechanics automatically split
-partitions across them, no code change needed.
+    
 """
 import sys
 from pathlib import Path
@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from app.core.database import SessionLocal
 from app.models.event import Event
 from app.core.kafka_config import get_consumer, get_producer, TOPIC_RAW_EVENTS, TOPIC_PROCESSED_EVENTS
-from app.services.nlp_extraction import process_event
+from app.services.pipeline.orchestrator import process_event_pipeline
 
 def run():
     consumer = get_consumer(TOPIC_RAW_EVENTS, group_id="nlp-workers")
@@ -32,14 +32,17 @@ def run():
                 consumer.commit()
                 continue
 
-            process_event(db, event)  
+            result = process_event_pipeline(db, event)  
 
             producer.send(TOPIC_PROCESSED_EVENTS, {"event_id": event_id})
             producer.flush()
 
             consumer.commit()  
-            print(f"[nlp_worker] processed event {event_id}")
-
+            if result["failed_stages"]:
+                print(f"[nlp_worker] event {event_id} processed with partial failures: {result['failed_stages']}")
+            else:
+                print(f"[nlp_worker] processed event {event_id}")
+                
         except Exception as e:
             print(f"[nlp_worker] FAILED event {event_id}: {e}")
         finally:

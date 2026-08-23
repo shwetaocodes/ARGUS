@@ -12,7 +12,6 @@ from app.models.event_classification import EventClassification, EventCategory
 from app.services.geocoding import geocode_place
 from app.services.geocoder import geocode_place
 from app.models.entity_relationship import EntityRelationship
-from app.services.watch_service import check_entity_watches, check_location_watches
 from app.services.entity_resolver import resolve_entity
 from app.services.pipeline.orchestrator import process_event_pipeline
 
@@ -59,75 +58,6 @@ def upsert_entity(db: Session, name: str, entity_type: str) -> Entity:
             entity.longitude = geo["lon"]
             entity.geocode_confidence = geo["confidence"]
     return entity
-
-def process_event(db: Session, event: Event):
-    event.status = EventStatus.processing
-    db.commit()
-
-    try:
-        data = extract_structured_data(event.raw_text)
-
-        linked_entities = []
-
-        # --- entities ---
-        for item in data.get("entities", []):
-            if item.get("type") not in VALID_ENTITY_TYPES or not item.get("name"):
-                continue
-            entity = upsert_entity(db, item["name"], item["type"])
-            linked_entities.append(entity)
-
-            link = db.query(EventEntity).filter(
-                EventEntity.event_id == event.id, EventEntity.entity_id == entity.id
-            ).first()
-            if not link:
-                db.add(EventEntity(
-                    event_id=event.id,
-                    entity_id=entity.id,
-                    relevance_score=item.get("relevance"),
-                    confidence=item.get("confidence") if item.get("confidence") in VALID_CONFIDENCE else None,
-                ))
-
-        # --- existing relationship graph update  ---
-        entity_ids_for_relationships = [e.id for e in linked_entities]
-        update_entity_relationships(db, entity_ids_for_relationships, event.published_at)
-
-        # --- watch checks ---
-        check_entity_watches(db, event, [e.id for e in linked_entities])
-        location_entities = [e for e in linked_entities if e.type == EntityType.location]
-        check_location_watches(db, event, location_entities)
-
-        # --- classification ---
-        classification = data.get("classification", {}) 
-        if classification.get("category") in VALID_CATEGORIES:
-            db.add(EventClassification(
-                event_id=event.id,
-                category=EventCategory(classification["category"]),
-                confidence=ConfidenceLevel(classification.get("confidence", "low")),
-            ))
-
-        # --- sentiment ---
-        sentiment = data.get("sentiment", {})
-        if sentiment.get("tone") in VALID_SENTIMENTS:
-            event.sentiment = Sentiment(sentiment["tone"])
-            event.sentiment_confidence = ConfidenceLevel(sentiment.get("confidence", "low"))
-
-        # --- date  ---
-        date_str = data.get("date_mentioned")
-        if date_str and date_str.lower() != "null":
-            from datetime import datetime
-            try:
-                event.event_date_mentioned = datetime.strptime(date_str, "%Y-%m-%d")
-            except ValueError:
-                pass  
-
-        event.status = EventStatus.processed
-        db.commit()
-
-    except Exception as e:
-        db.rollback()
-        event.status = EventStatus.failed
-        db.commit()
-        print(f"[NLP] Event {event.id} failed: {e}")
 
     def update_entity_relationships(db: Session, entity_ids: list[int], event_timestamp):
         """Called after all entities for one event are linked — updates co-occurrence for every pair."""
