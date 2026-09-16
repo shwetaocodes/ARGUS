@@ -8,6 +8,7 @@ from app.models.event import Event
 from app.models.entity import Entity
 from app.models.event_entity import EventEntity
 from app.models.detection import Detection, DetectionType
+from app.services.detection_fingerprint import make_fingerprint
 
 _model = None
 
@@ -76,6 +77,14 @@ def run_cross_source_correlation(db: Session, window_hours: int = 48, min_source
 
         confidence = min(0.95, 0.5 + 0.4 * similarity + 0.05 * (distinct_source_count - min_sources))
 
+
+        event_ids_sorted = sorted(e["event_id"] for e in cluster["events"])
+        fingerprint = make_fingerprint("cross_source", cluster["location_entity_id"], *event_ids_sorted)
+
+        existing = db.query(Detection).filter(Detection.fingerprint == fingerprint).first()
+        if existing:
+            continue
+
         detection = Detection(
             type=DetectionType.cross_source,
             sector_id=None,
@@ -86,6 +95,7 @@ def run_cross_source_correlation(db: Session, window_hours: int = 48, min_source
                 f"sources referenced '{cluster['location_name']}' within a {window_hours}-hour window "
                 f"(average content similarity: {similarity:.2f})."
             ),
+            fingerprint=fingerprint,
             evidence=json.dumps({
                 "location": cluster["location_name"],
                 "window_hours": window_hours,

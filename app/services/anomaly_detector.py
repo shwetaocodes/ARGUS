@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.models.sector import Sector
 from app.models.detection import Detection, DetectionType
+from app.services.detection_fingerprint import make_fingerprint
 from app.services.map_service import get_events_with_locations, filter_events_by_polygon
 
 
@@ -97,6 +98,11 @@ def run_anomaly_detection(db: Session, sector: Sector) -> list[Detection]:
         confirmed_by_isolation_forest = anomaly["date"] in if_dates
         confidence = min(0.95, 0.55 + 0.15 * anomaly["std_deviations"] + (0.2 if confirmed_by_isolation_forest else 0))
 
+        fingerprint = make_fingerprint("anomaly", sector.id, anomaly["date"])
+        existing = db.query(Detection).filter(Detection.fingerprint == fingerprint).first()
+        if existing:
+            continue 
+
         detection = Detection(
             type=DetectionType.anomaly,
             sector_id=sector.id,
@@ -108,6 +114,7 @@ def run_anomaly_detection(db: Session, sector: Sector) -> list[Detection]:
                 f"(expected trend: {anomaly['trend']:.1f})."
                 + (" Confirmed independently by Isolation Forest." if confirmed_by_isolation_forest else "")
             ),
+            fingerprint=fingerprint,
             evidence=json.dumps({
                 "method": "STL decomposition + Isolation Forest cross-check" if confirmed_by_isolation_forest else "STL decomposition",
                 "date": anomaly["date"],

@@ -6,7 +6,8 @@ from app.services.pipeline.stages import (
     run_geocoding_stage, run_sentiment_stage,
 )
 from app.services.pipeline.schemas import NERResult
-from app.services.pipeline.stages import run_confidence_calibration_stage
+from app.services.pipeline.stages import run_confidence_calibration_stage, update_entity_relationships
+from app.models.pipeline_stage_log import PipelineStageLog, StageStatus
 
 
 def process_event_pipeline(db: Session, event: Event):
@@ -23,13 +24,22 @@ def process_event_pipeline(db: Session, event: Event):
 
     try:
         ner_result = run_ner_stage(db, event)
-        linked_entities = run_entity_linking_stage(db, event, ner_result)
+        linked_entities, resolution_info_by_entity_id = run_entity_linking_stage(db, event, ner_result)
+
+        if len(linked_entities) > 1:
+            entity_ids = [e.id for e in linked_entities]
+            update_entity_relationships(db, entity_ids, event.published_at)
+            db.add(PipelineStageLog(event_id=event.id, stage="entity_relationships", status=StageStatus.success))
+            db.commit()
+
     except Exception:
         stage_failures.append("ner_or_linking")
         ner_result = NERResult(entities=[])
+        linked_entities = []
+        resolution_info_by_entity_id = {}
 
     if linked_entities:
-        run_confidence_calibration_stage(db, event, linked_entities, ner_result)
+        run_confidence_calibration_stage(db, event, linked_entities, ner_result, resolution_info_by_entity_id)
 
     try:
         classification = run_classification_stage(db, event)

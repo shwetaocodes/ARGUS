@@ -81,20 +81,21 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
     return float(np.dot(a, b) / denom) if denom > 0 else 0.0
 
 
-def resolve_entity(db: Session, name: str, entity_type: str) -> Entity:
+def resolve_entity(db: Session, name: str, entity_type: str) -> tuple[Entity, dict]:
     """
-    The single entry point. Returns an Entity — either an existing one that
-    was matched, or a newly created one. Every call writes exactly one
-    EntityResolutionLog row explaining which stage decided the outcome.
+    Returns (entity, resolution_info) where resolution_info is:
+    {"method": str, "score": float | None}
+    score is None for exact/alias-dictionary matches (fully deterministic,
+    no similarity number applies) and a real float for embedding/fuzzy matches.
     """
     normalized = normalize_name(name)
+
 
     alias_row = db.query(EntityAliasDictionary).filter(
         EntityAliasDictionary.alias_normalized == normalized
     ).first()
 
     if alias_row:
-        canonical_normalized = normalize_name(alias_row.canonical_name)
         entity = db.query(Entity).filter(
             Entity.type == EntityType(entity_type),
             or_(
@@ -107,13 +108,14 @@ def resolve_entity(db: Session, name: str, entity_type: str) -> Entity:
             if name not in (entity.aliases or []):
                 entity.aliases = (entity.aliases or []) + [name]
             _log_resolution(db, name, normalized, entity.id, "alias_dictionary", 1.0)
-            return entity
+            return entity, {"method": "alias_dictionary", "score": None}
 
         entity = Entity(name=alias_row.canonical_name, type=EntityType(entity_type), aliases=[name])
         db.add(entity)
         db.flush()
         _log_resolution(db, name, normalized, entity.id, "alias_dictionary_new", 1.0)
-        return entity
+        return entity, {"method": "alias_dictionary_new", "score": None}
+
 
     entity = db.query(Entity).filter(
         Entity.type == EntityType(entity_type),
@@ -122,7 +124,8 @@ def resolve_entity(db: Session, name: str, entity_type: str) -> Entity:
 
     if entity:
         _log_resolution(db, name, normalized, entity.id, "exact_match", 1.0)
-        return entity
+        return entity, {"method": "exact_match", "score": None}
+
 
     candidates = db.query(Entity).filter(
         Entity.type == EntityType(entity_type),
@@ -142,7 +145,8 @@ def resolve_entity(db: Session, name: str, entity_type: str) -> Entity:
         if name not in (best_match.aliases or []):
             best_match.aliases = (best_match.aliases or []) + [name]
         _log_resolution(db, name, normalized, best_match.id, "embedding_auto", best_score)
-        return best_match
+        return best_match, {"method": "embedding_auto", "score": best_score}
+
 
     fuzzy_best, fuzzy_score = None, 0
     all_same_type = db.query(Entity).filter(Entity.type == EntityType(entity_type)).all()
@@ -157,7 +161,8 @@ def resolve_entity(db: Session, name: str, entity_type: str) -> Entity:
         if name not in (fuzzy_best.aliases or []):
             fuzzy_best.aliases = (fuzzy_best.aliases or []) + [name]
         _log_resolution(db, name, normalized, fuzzy_best.id, "fuzzy_auto", fuzzy_score / 100)
-        return fuzzy_best
+        return fuzzy_best, {"method": "fuzzy_auto", "score": fuzzy_score / 100}
+
 
     new_entity = Entity(name=name, type=EntityType(entity_type), aliases=[], name_embedding=input_embedding)
     db.add(new_entity)
@@ -175,4 +180,4 @@ def resolve_entity(db: Session, name: str, entity_type: str) -> Entity:
         ))
 
     _log_resolution(db, name, normalized, new_entity.id, "new_entity", None)
-    return new_entity
+    return new_entity, {"method": "new_entity", "score": best_score if best_match else None}

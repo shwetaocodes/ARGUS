@@ -8,7 +8,7 @@ from app.models.event import Event
 from app.models.sector import Sector
 from app.models.detection import Detection, DetectionType
 from app.services.map_service import get_events_with_locations, filter_events_by_polygon
-
+from app.services.detection_fingerprint import make_fingerprint
 
 def get_classified_sector_events(db: Session, sector: Sector, days_back: int = 90):
     """Events in this sector with a classification, chronological."""
@@ -82,6 +82,31 @@ def run_sequence_detection(db: Session, sector: Sector, min_confidence: float = 
         if not match or match["match_ratio"] < min_confidence:
             continue
 
+        start_event_id = match["matched_events"][0]["event_id"]
+        fingerprint = make_fingerprint("sequence", template.id, start_event_id)
+
+        existing = db.query(Detection).filter(Detection.fingerprint == fingerprint).first()
+        if existing:
+            if match["match_ratio"] > existing.confidence:
+                existing.confidence = round(match["match_ratio"], 2)
+                existing.description = (
+                    f"Live event sequence in {sector.name} matches the '{template.name}' pattern template "
+                    f"at {match['match_ratio']*100:.0f}% confidence — {match['steps_matched']} of "
+                    f"{match['total_steps']} defined steps observed in order within their configured time windows."
+                )
+                existing.evidence = json.dumps({
+                    "template_name": template.name,
+                    "template_id": template.id,
+                    "matched_events": [
+                        {"event_id": e["event_id"], "title": e["title"], "category": e["category"], "date": str(e["published_at"])}
+                        for e in match["matched_events"]
+                    ],
+                    "steps_matched": match["steps_matched"],
+                    "total_steps": match["total_steps"],
+                })
+                db.commit()
+            continue
+
         detection = Detection(
             type=DetectionType.sequence,
             sector_id=sector.id,
@@ -92,6 +117,7 @@ def run_sequence_detection(db: Session, sector: Sector, min_confidence: float = 
                 f"at {match['match_ratio']*100:.0f}% confidence — {match['steps_matched']} of "
                 f"{match['total_steps']} defined steps observed in order within their configured time windows."
             ),
+            fingerprint=fingerprint,
             evidence=json.dumps({
                 "template_name": template.name,
                 "template_id": template.id,

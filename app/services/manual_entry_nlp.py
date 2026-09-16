@@ -44,7 +44,7 @@ def process_incident_entities(db: Session, incident):
         return
 
     for item in result.entities:
-        entity = resolve_entity(db, item.name, item.type)
+        entity, resolution_info = resolve_entity(db, item.name, item.type)
 
         if entity.type == EntityType.location and entity.latitude is None:
             geo = geocode_place(item.name, context=incident.description)
@@ -71,7 +71,7 @@ def process_sitrep_entities(db: Session, sitrep):
         return
 
     for item in result.entities:
-        entity = resolve_entity(db, item.name, item.type)
+        entity, resolution_info = resolve_entity(db, item.name, item.type)
 
         if entity.type == EntityType.location and entity.latitude is None:
             geo = geocode_place(item.name, context=sitrep.content)

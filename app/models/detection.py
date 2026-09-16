@@ -1,5 +1,5 @@
 import enum, json
-from sqlalchemy import Column, Integer, String, Text, Float, ForeignKey, DateTime, Enum, func
+from sqlalchemy import Column, Integer, String, Text, Float, ForeignKey, DateTime, Enum, func, UniqueConstraint
 from sqlalchemy.orm import relationship
 from app.core.database import Base
 
@@ -27,6 +27,9 @@ class Detection(Base):
     status = Column(Enum(DetectionStatus), default=DetectionStatus.new, nullable=False)
     reviewed_by_id = Column(Integer, ForeignKey("analysts.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    fingerprint = Column(String(64), nullable=False, index=True)
 
     sector = relationship("Sector")
     reviewer = relationship("Analyst")
+
+    __table_args__ = (UniqueConstraint("fingerprint", name="uq_detection_fingerprint"),)

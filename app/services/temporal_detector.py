@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.models.sector import Sector
 from app.models.sector_baseline import SectorBaseline
 from app.models.detection import Detection, DetectionType
+from app.services.detection_fingerprint import make_fingerprint
 from app.services.map_service import get_events_with_locations, filter_events_by_polygon
 
 
@@ -59,6 +60,13 @@ def run_temporal_detection(db: Session, sector: Sector, min_prior_years: int = 1
 
         month_name = datetime(2000, current_month, 1).strftime("%B")
 
+        current_year = datetime.utcnow().year
+        fingerprint = make_fingerprint("temporal", sector.id, baseline.category, current_month, current_year)
+
+        existing = db.query(Detection).filter(Detection.fingerprint == fingerprint).first()
+        if existing:
+            continue
+
         detection = Detection(
             type=DetectionType.temporal,
             sector_id=sector.id,
@@ -70,6 +78,7 @@ def run_temporal_detection(db: Session, sector: Sector, min_prior_years: int = 1
                 f"prior year(s). Current month shows {actual} so far, "
                 f"{'in line with' if tracking_score > 0.6 else 'diverging from'} the seasonal pattern."
             ),
+            fingerprint=fingerprint,
             evidence=json.dumps({
                 "category": baseline.category,
                 "month": month_name,
